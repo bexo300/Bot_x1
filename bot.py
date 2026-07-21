@@ -38,84 +38,49 @@ PLAYLISTS_FILE = 'playlists.json'
 STATS_FILE = 'stats.json'
 USERS_FILE = 'users.json'
 
-# =============== قفل للملفات ===============
-_file_lock = asyncio.Lock()
-
-# =============== دوال التخزين ===============
-
-async def load_videos_async():
-    async with _file_lock:
-        if os.path.exists(VIDEOS_FILE):
-            with open(VIDEOS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-    return {}
-
-async def load_playlists_async():
-    async with _file_lock:
-        if os.path.exists(PLAYLISTS_FILE):
-            with open(PLAYLISTS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-    return {}
-
-async def load_stats_async():
-    async with _file_lock:
-        if os.path.exists(STATS_FILE):
-            with open(STATS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-    return {}
-
-async def load_users_async():
-    async with _file_lock:
-        if os.path.exists(USERS_FILE):
-            with open(USERS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-    return {}
-
-async def save_videos_async(videos):
-    async with _file_lock:
-        with open(VIDEOS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(videos, f, ensure_ascii=False, indent=2)
-
-async def save_playlists_async(playlists):
-    async with _file_lock:
-        with open(PLAYLISTS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(playlists, f, ensure_ascii=False, indent=2)
-
-async def save_stats_async(stats):
-    async with _file_lock:
-        with open(STATS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(stats, f, ensure_ascii=False, indent=2)
-
-async def save_users_async(users):
-    async with _file_lock:
-        with open(USERS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(users, f, ensure_ascii=False, indent=2)
+# =============== دوال التخزين (غير متزامنة - بدون asyncio.run) ===============
 
 def load_videos():
-    return asyncio.run(load_videos_async())
+    if os.path.exists(VIDEOS_FILE):
+        with open(VIDEOS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
 
 def load_playlists():
-    return asyncio.run(load_playlists_async())
+    if os.path.exists(PLAYLISTS_FILE):
+        with open(PLAYLISTS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
 
 def load_stats():
-    return asyncio.run(load_stats_async())
+    if os.path.exists(STATS_FILE):
+        with open(STATS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
 
 def load_users():
-    return asyncio.run(load_users_async())
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
 
 def save_videos(videos):
-    asyncio.run(save_videos_async(videos))
+    with open(VIDEOS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(videos, f, ensure_ascii=False, indent=2)
 
 def save_playlists(playlists):
-    asyncio.run(save_playlists_async(playlists))
+    with open(PLAYLISTS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(playlists, f, ensure_ascii=False, indent=2)
 
 def save_stats(stats):
-    asyncio.run(save_stats_async(stats))
+    with open(STATS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(stats, f, ensure_ascii=False, indent=2)
 
 def save_users(users):
-    asyncio.run(save_users_async(users))
+    with open(USERS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(users, f, ensure_ascii=False, indent=2)
 
-# تحميل البيانات
+# تحميل البيانات (استخدام الدوال المتزامنة العادية)
 videos = load_videos()
 playlists = load_playlists()
 stats = load_stats()
@@ -1160,12 +1125,8 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_messages))
     
     # تشغيل البوت
-    if os.getenv('RAILWAY_ENVIRONMENT'):
-        logger.info("Starting bot in Railway mode...")
-        application.run_polling()
-    else:
-        logger.info("Starting bot in local mode...")
-        application.run_polling()
+    logger.info("Starting bot...")
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
