@@ -20,6 +20,11 @@ ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
 if not ADMIN_ID:
     raise ValueError("ADMIN_ID is required!")
 
+# =============== قناة التخزين الخاصة ===============
+STORAGE_CHANNEL = os.getenv('STORAGE_CHANNEL', '')  # مثال: -100123456789
+if not STORAGE_CHANNEL:
+    logger.warning("⚠️ STORAGE_CHANNEL not set! Videos will be saved using file_id only.")
+
 # المشرفين (اختياري)
 MODERATORS = []
 for id_str in os.getenv('MODERATORS', '').split(','):
@@ -100,6 +105,55 @@ def get_videos_list_keyboard(back_callback='admin_panel'):
         keyboard.append([InlineKeyboardButton(f"🎬 {name}", callback_data=f'play_{name}')])
     keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data=back_callback)])
     return InlineKeyboardMarkup(keyboard)
+
+# =============== حفظ واسترجاع الفيديو من القناة ===============
+
+async def save_video_to_channel(update: Update, context: ContextTypes.DEFAULT_TYPE, video_file_id, video_name):
+    """رفع الفيديو إلى القناة وحفظ معرف الرسالة"""
+    if not STORAGE_CHANNEL:
+        # إذا لم توجد قناة تخزين، نحفظ الـ file_id فقط
+        return {'type': 'file_id', 'file_id': video_file_id}
+    
+    try:
+        sent_message = await context.bot.send_video(
+            chat_id=STORAGE_CHANNEL,
+            video=video_file_id,
+            caption=f"🎬 {video_name}\n📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        )
+        
+        return {
+            'type': 'channel',
+            'channel_id': STORAGE_CHANNEL,
+            'message_id': sent_message.message_id,
+            'name': video_name,
+            'date': datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error saving to channel: {e}")
+        # في حالة الفشل، نحفظ الـ file_id كنسخة احتياطية
+        return {'type': 'file_id', 'file_id': video_file_id}
+
+async def get_video_from_storage(update: Update, context: ContextTypes.DEFAULT_TYPE, video_data):
+    """استرجاع الفيديو من التخزين (قناة أو file_id)"""
+    try:
+        if video_data.get('type') == 'channel':
+            # نسخ الفيديو من القناة
+            await context.bot.copy_message(
+                chat_id=update.effective_chat.id,
+                from_chat_id=video_data['channel_id'],
+                message_id=video_data['message_id']
+            )
+            return True
+        else:
+            # استخدام file_id مباشرة
+            await context.bot.send_video(
+                chat_id=update.effective_chat.id,
+                video=video_data.get('file_id')
+            )
+            return True
+    except Exception as e:
+        logger.error(f"Error getting video: {e}")
+        return False
 
 # =============== المعالجات ===============
 
@@ -222,8 +276,34 @@ async def play_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if video_name in videos:
         try:
             increment_view(video_name, user_id)
+            video_data = videos[video_name]
+            
+            # محاولة إرسال الفيديو مع كابتشن
             caption = f"🎥 {video_name}"
-            await query.message.reply_video(videos[video_name], caption=caption)
+            
+            # إذا كان التخزين عبر القناة
+            if video_data.get('type') == 'channel':
+                try:
+                    await context.bot.copy_message(
+                        chat_id=user_id,
+                        from_chat_id=video_data['channel_id'],
+                        message_id=video_data['message_id']
+                    )
+                    return
+                except Exception as e:
+                    logger.error(f"Channel copy failed: {e}")
+                    # في حالة الفشل، نحاول استخدام file_id إذا كان موجوداً
+                    if video_data.get('file_id'):
+                        await query.message.reply_video(video_data['file_id'], caption=caption)
+                        return
+                    raise e
+            
+            # استخدام file_id مباشرة
+            if video_data.get('file_id'):
+                await query.message.reply_video(video_data['file_id'], caption=caption)
+            else:
+                await query.message.reply_text("⚠️ عذراً، هذا المقطع غير متوفر حالياً!")
+                
         except Exception as e:
             logger.error(f"Error sending video: {e}")
             await query.message.reply_text("⚠️ حدث خطأ في إرسال الفيديو!")
@@ -238,7 +318,6 @@ async def show_all_videos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = query.from_user.id
     
-    # التحقق من الاشتراك للمستخدم العادي
     if not is_staff(user_id):
         try:
             member = await context.bot.get_chat_member(f'@{CHANNEL_USERNAME}', user_id)
@@ -328,18 +407,35 @@ async def handle_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     try:
-        file_id = update.message.video.file_id
+        video_file_id = update.message.video.file_id
         video_name = context.user_data.get('video_name', f'مقطع {len(videos) + 1}')
         
-        videos[video_name] = file_id
+        # حفظ الفيديو في القناة الخاصة (إذا كانت موجودة)
+        video_data = await save_video_to_channel(update, context, video_file_id, video_name)
+        
+        # إضافة file_id كنسخة احتياطية
+        video_data['file_id'] = video_file_id
+        
+        videos[video_name] = video_data
         save_videos(videos)
         
         context.user_data.clear()
+        
+        storage_type = "في القناة الخاصة" if video_data.get('type') == 'channel' else "باستخدام معرف الملف"
         await update.message.reply_text(
             f"✅ **تم إضافة المقطع بنجاح!**\n\n"
             f"📌 الاسم: **{video_name}**\n"
-            f"📹 عدد المقاطع الآن: {len(videos)}"
+            f"📹 عدد المقاطع الآن: {len(videos)}\n"
+            f"📦 طريقة التخزين: {storage_type}"
         )
+        
+        # إذا تم الحفظ في القناة، أرسل رابط القناة
+        if video_data.get('type') == 'channel':
+            await update.message.reply_text(
+                f"💡 تم حفظ الفيديو في القناة الخاصة.\n"
+                f"📢 يمكنك مشاهدة جميع المقاطع المحفوظة في القناة."
+            )
+            
     except Exception as e:
         logger.error(f"Error saving video: {e}")
         await update.message.reply_text("⚠️ حدث خطأ أثناء حفظ الفيديو!")
@@ -374,8 +470,10 @@ async def delete_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video_name = query.data.replace('delete_', '')
     
     if video_name in videos:
+        # حذف من القائمة
         del videos[video_name]
         save_videos(videos)
+        
         await query.message.edit_text(f"✅ تم حذف **{video_name}** بنجاح!")
         await admin_panel(update, context)
     else:
@@ -395,7 +493,12 @@ async def admin_list_videos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = "📋 **قائمة المقاطع:**\n\n"
     for i, name in enumerate(videos.keys(), 1):
+        video_data = videos[name]
+        storage_type = "📦 قناة" if video_data.get('type') == 'channel' else "📁 معرف ملف"
+        views = stats.get(name, {}).get('views', 0)
         text += f"{i}. **{name}**\n"
+        text += f"   📊 {views} مشاهدة\n"
+        text += f"   💾 {storage_type}\n\n"
     
     keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data='admin_panel')]]
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
